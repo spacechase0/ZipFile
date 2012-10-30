@@ -39,6 +39,9 @@ namespace zip
 			bool loadFromFile( const std::string& filename );
 			bool loadFromMemory( const std::string& contents );
 			
+			bool saveToFile( const std::string& filename );
+			void saveToMemory( std::string& contents );
+			
 			void addFile( const std::string& path, const std::string& contents );
 			void addDirectory( const std::string& path );
 		
@@ -46,7 +49,6 @@ namespace zip
 			std::string getParent( const std::string& path );
 			std::string getName( const std::string& path );
 			Entry* createEntryAt( const std::string& path );
-			void readAndInflate( std::stringstream& ss, std::string& contents );
 	};
 }
 

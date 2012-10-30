@@ -25,6 +25,8 @@
 #include <iostream>
 #include <string>
 
+#include <util/Tokenize.h>
+
 #include "zip/File.hpp"
 
 namespace
@@ -87,7 +89,7 @@ int main_zip( int argc, char* argv[] )
 	#endif
 	
 	zip::File file;
-	if ( !file.loadFromFile( ( argc > 1 ) ? argv[ 1 ] : "win_other.zip" ) )
+	if ( !file.loadFromFile( ( argc > 1 ) ? argv[ 1 ] : "win.zip" ) )
 	{
 		std::cout << "Failed to load zip file." << std::endl;
 		return 1;
@@ -106,6 +108,42 @@ int main_zip( int argc, char* argv[] )
 		if ( line == "" )
 		{
 			break;
+		}
+		else if ( line.length() >= 2 and line.substr( 0, 2 ) == "//" )
+		{
+			line = line.substr( 2 );
+			std::vector< std::string > tokens = util::tokenize( line, " " );
+			
+			if ( tokens.size() < 1 )
+			{
+				continue;
+			}
+			
+			if ( tokens[ 0 ] == "addFile" and tokens.size() >= 2 )
+			{
+				std::string name = tokens[ 1 ];
+				std::string contents;
+				for ( std::size_t i = 2; i < tokens.size(); ++i )
+				{
+					contents += tokens[ i ];
+					if ( i != tokens.size() - 1 )
+					{
+						contents += ' ';
+					}
+				}
+				
+				file.addFile( name, contents );
+			}
+			else if ( tokens[ 0 ] == "addDirectory" and tokens.size() >= 2 )
+			{
+				std::string name = tokens[ 1 ];
+				file.addDirectory( name );
+			}
+			else if ( tokens[ 0 ] == "save" and tokens.size() >= 2 )
+			{
+				std::string name = tokens[ 1 ];
+				file.saveToFile( name );
+			}
 		}
 		else if ( line == "/" )
 		{
@@ -132,3 +170,4 @@ int main_zip( int argc, char* argv[] )
 	
 	return 0;
 }
+//int main(int argc, char* argv[]){main_zip(argc,argv);}

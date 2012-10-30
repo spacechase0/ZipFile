@@ -28,6 +28,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <util/Convert.h>
+#include <util/Crc32.hpp>
 #include <util/Endian.h>
 #include <util/Tokenize.h>
 #include <zlib.h>
@@ -60,6 +61,18 @@ namespace
 		
 		return t;
 	}
+	template< typename T >
+	void write( std::stringstream& ss, T t )
+	{
+		#ifdef SFML_ENDIAN_BIG
+		if ( sizeof( T ) > 1 )
+		{
+			t = util::swapBytes( t );
+		}
+		#endif
+		
+		ss.write( reinterpret_cast< char* >( &t ), sizeof( T ) );
+	}
 	
 	std::string readStr( std::stringstream& ss, std::size_t len )
 	{
@@ -73,11 +86,23 @@ namespace
 		return str;
 	}
 	
+	void writeStr( std::stringstream& ss, const std::string& str, std::size_t len )
+	{
+		ss.write( &str[ 0 ], len );
+	}
+	
 	template< typename T >
 	std::string readStr( std::stringstream& ss )
 	{
 		T len = read< T >( ss );
 		return readStr( ss, len );
+	}
+	
+	template< typename T >
+	void writeStr( std::stringstream& ss, const std::string& str )
+	{
+		write< T >( ss, str.length() );
+		writeStr( ss, str, str.length() );
 	}
 	
 	template< sf::Uint16 N >
@@ -270,6 +295,22 @@ namespace
 		return ecd;
 	}
 	
+	void writeEndCentralDir( std::stringstream& ss, EndCentralDirectoryStructure& ecd )
+	{
+		writeStr( ss, makeSig( EndCentralDirectoryStructure::SIGNATURE ), 4 );
+		
+		write< sf::Uint16 >( ss, ecd.diskNum );
+		write< sf::Uint16 >( ss, ecd.diskNumStartCentralDirectory );
+		
+		write< sf::Uint16 >( ss, ecd.entryCountDisk );
+		write< sf::Uint16 >( ss, ecd.entryCountCentral );
+		
+		write< sf::Uint32 >( ss, ecd.centralDirSize );
+		write< sf::Uint32 >( ss, ecd.centralDirOffset );
+		
+		writeStr< sf::Uint16 >( ss, ecd.comment );
+	}
+	
 	void readLocalFileHeaderBase( std::stringstream& ss, LocalFileHeaderBase& lfh )
 	{
 		lfh.minVersion = read< sf::Uint16 >( ss );
@@ -283,6 +324,21 @@ namespace
 		
 		lfh.sizeCompressed = read< sf::Uint32 >( ss );
 		lfh.sizeNormal = read< sf::Uint32 >( ss );
+	}
+	
+	void writeLocalFileHeaderBase( std::stringstream& ss, const LocalFileHeaderBase& lfh )
+	{
+		write( ss, lfh.minVersion );
+		write( ss, lfh.flags );
+		write( ss, lfh.compressType );
+		
+		write( ss, lfh.lastModTime );
+		write( ss, lfh.lastModDate );
+		
+		write( ss, lfh.crc32 );
+		
+		write( ss, lfh.sizeCompressed );
+		write( ss, lfh.sizeNormal );
 	}
 	
 	CentralDirectoryStructure readCentralDir( std::stringstream& ss )
@@ -311,6 +367,28 @@ namespace
 		return cd;
 	}
 	
+	void writeCentralDir( std::stringstream& ss, const CentralDirectoryStructure& cd )
+	{
+		writeStr( ss, makeSig( CentralDirectoryStructure::SIGNATURE ), 4 );
+		
+		write( ss, cd.versionMade );
+		
+		writeLocalFileHeaderBase( ss, cd );
+		
+		write< sf::Uint16 >( ss, cd.filename.length() );
+		write< sf::Uint16 >( ss, cd.extra.length() );
+		write< sf::Uint16 >( ss, cd.comment.length() );
+		
+		write( ss, cd.diskNumStart );
+		write( ss, cd.inAttr );
+		write( ss, cd.exAttr );
+		write( ss, cd.localHeaderOffset );
+		
+		writeStr( ss, cd.filename, cd.filename.length() );
+		writeStr( ss, cd.extra, cd.extra.length() );
+		writeStr( ss, cd.comment, cd.comment.length() );
+	}
+	
 	LocalFileHeader readLocalFileHeader( std::stringstream& ss )
 	{
 		sf::Uint32 sig = read< sf::Uint32 >( ss );
@@ -326,6 +404,240 @@ namespace
 		lf.extra = readStr( ss, extraLength );
 		
 		return lf;
+	}
+	
+	void writeLocalFileHeader( std::stringstream& ss, const LocalFileHeader& lf )
+	{
+		writeStr( ss, makeSig( LocalFileHeader::SIGNATURE ), 4 );
+		
+		writeLocalFileHeaderBase( ss, lf );
+		
+		write< sf::Uint16 >( ss, lf.filename.length() );
+		write< sf::Uint16 >( ss, lf.extra.length() );
+		
+		writeStr( ss, lf.filename, lf.filename.length() );
+		writeStr( ss, lf.extra, lf.extra.length() );
+	}
+	
+	void readAndInflate( std::stringstream& ss, std::string& contents )
+	{
+		std::size_t beforePos = ss.tellg();
+		
+		z_stream stream;
+		stream.zalloc = Z_NULL;
+		stream.zfree = Z_NULL;
+		stream.opaque = Z_NULL;
+		stream.next_in = Z_NULL;
+		stream.avail_in = 0;
+		
+		int ret = inflateInit2( &stream, -15 ); // -15 == use raw deflate data, not header/check values. Took me a while to find that :P
+		if ( ret != Z_OK )
+		{
+			throw std::runtime_error( "Failed to init zlib inflate." );
+		}
+		
+		class InflateEnder
+		{
+			public:
+				InflateEnder( z_stream& theStream )
+				   : stream( theStream )
+				{
+				}
+				
+				~InflateEnder()
+				{
+					inflateEnd( &stream );
+				}
+			
+			private:
+				z_stream& stream;
+		} ie( stream );
+		
+		constexpr std::size_t BUFFER_SIZE = 16;
+		unsigned char bufferIn[ BUFFER_SIZE ];
+		unsigned char bufferOut[ BUFFER_SIZE ];
+		do
+		{
+			ss.read( reinterpret_cast< char* >( bufferIn ), BUFFER_SIZE );
+			stream.avail_in = ss.gcount();
+			if ( ss.bad() )
+			{
+				throw std::runtime_error( "Some error with reading the stream?" );
+			}
+			
+			if ( stream.avail_in == 0 )
+			{
+				break;
+			}
+			
+			stream.next_in = bufferIn;
+			
+			do
+			{
+				stream.avail_out = BUFFER_SIZE;
+				stream.next_out = bufferOut;
+				ret = inflate( &stream, Z_NO_FLUSH );
+				
+				switch ( ret )
+				{
+					case Z_NEED_DICT:
+						//ret = Z_DATA_ERROR;
+					case Z_DATA_ERROR:
+					case Z_MEM_ERROR:
+					case Z_STREAM_ERROR:
+						throw std::runtime_error( "Some error with inflate: " + util::toString( ret ) );
+				}
+				
+				unsigned int have = BUFFER_SIZE - stream.avail_out;
+				contents += std::string( reinterpret_cast< char* >( bufferOut ), have );
+			}
+			while ( stream.avail_out == 0 );
+		}
+		while ( ret != Z_STREAM_END );
+		
+		ss.seekg( beforePos + stream.total_in );
+	}
+	
+	std::string getDeflated( const std::string& contents )
+	{
+		z_stream stream;
+		stream.zalloc = Z_NULL;
+		stream.zfree = Z_NULL;
+		stream.opaque = Z_NULL;
+		
+		int ret = deflateInit2( &stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -15, 8, Z_DEFAULT_STRATEGY ); // -15 == use raw deflate data, not header/check values. Took me a while to find that :P
+		if ( ret != Z_OK )
+		{
+			throw std::runtime_error( "Failed to init zlib inflate." );
+		}
+		
+		class DeflateEnder
+		{
+			public:
+				DeflateEnder( z_stream& theStream )
+				   : stream( theStream )
+				{
+				}
+				
+				~DeflateEnder()
+				{
+					deflateEnd( &stream );
+				}
+			
+			private:
+				z_stream& stream;
+		} de( stream );
+		
+		std::stringstream ss( contents, std::stringstream::in | std::stringstream::binary );
+		std::string toReturn;
+		
+		constexpr std::size_t BUFFER_SIZE = 16;
+		unsigned char bufferIn[ BUFFER_SIZE ];
+		unsigned char bufferOut[ BUFFER_SIZE ];
+		do
+		{
+			ss.read( reinterpret_cast< char* >( bufferIn ), BUFFER_SIZE );
+			stream.avail_in = ss.gcount();
+			if ( ss.bad() )
+			{
+				throw std::runtime_error( "Some error with reading the stream?" );
+			}
+			
+			if ( stream.avail_in == 0 )
+			{
+				break;
+			}
+			
+			stream.next_in = bufferIn;
+			int flush = ss.eof() ? Z_FINISH : Z_NO_FLUSH;
+			
+			do
+			{
+				stream.avail_out = BUFFER_SIZE;
+				stream.next_out = bufferOut;
+				ret = deflate( &stream, flush );
+				
+				switch ( ret )
+				{
+					case Z_NEED_DICT:
+						//ret = Z_DATA_ERROR;
+					case Z_DATA_ERROR:
+					case Z_MEM_ERROR:
+					case Z_STREAM_ERROR:
+						throw std::runtime_error( "Some error with deflate: " + util::toString( ret ) );
+				}
+				
+				unsigned int have = BUFFER_SIZE - stream.avail_out;
+				toReturn += std::string( reinterpret_cast< char* >( bufferOut ), have );
+			}
+			while ( stream.avail_out == 0 );
+		}
+		while ( ret != Z_STREAM_END );
+		
+		return toReturn;
+	}
+	
+	sf::Uint16 makeDosDate( struct tm* time )
+	{
+		sf::Uint16 date = 0;
+		date ^= static_cast< sf::Uint16 >( ( time->tm_year - 80 ) & 0x7F ) << 9;
+		date ^= static_cast< sf::Uint16 >( ( time->tm_mon  +  1 ) & 0x0F ) << 5;
+		date ^= static_cast< sf::Uint16 >( ( time->tm_mday +  0 ) & 0x1F ) << 0;
+		return date;
+	}
+	
+	sf::Uint16 makeDosTime( struct tm* theTime )
+	{
+		sf::Uint16 time = 0;
+		time ^= static_cast< sf::Uint16 >( ( theTime->tm_hour + 0 ) & 0x1F ) << 11;
+		time ^= static_cast< sf::Uint16 >( ( theTime->tm_min  + 0 ) & 0x3F ) <<  5;
+		time ^= static_cast< sf::Uint16 >( ( theTime->tm_mday / 2 ) & 0x1F ) <<  0;
+		return time;
+	}
+	
+	void writeFile( std::stringstream& ss, const zip::priv::EntryBase& entry, std::vector< std::pair< LocalFileHeader, std::size_t > >& lfs, const std::string& pre = "" )
+	{
+		for ( auto it = entry.begin(); it != entry.end(); ++it )
+		{
+			zip::Entry& entry = ( * it->get() );
+			if ( entry.isDirectory() )
+			{
+				writeFile( ss, entry, lfs, pre + entry.getName() + "/" );
+			}
+			else
+			{
+				LocalFileHeader lf;
+				lf.minVersion = 20; // Assuming this because I don't want to bother doing it properly :P
+				lf.flags = 0;
+				lf.compressType = Compression::Deflated; // TO DO: Choose based on Entry (somehow)
+				
+				// TO DO: Use cstdtime somehow
+				std::time_t rawTime; std::time( &rawTime );
+				struct tm* time = std::localtime( &rawTime );
+				lf.lastModTime = makeDosTime( time );
+				lf.lastModDate = makeDosDate( time );
+				
+				std::string data = getDeflated( entry.getContents() );
+				if ( data.length() >= entry.getContents().length() )
+				{
+					//lf.minVersion = 10;
+					lf.compressType = 0;
+					data = entry.getContents();
+				}
+				
+				lf.crc32 = util::crc32( entry.getContents() );//data/*, magicNumberCrc32*/ );
+				
+				lf.sizeCompressed = data.length();
+				lf.sizeNormal = entry.getContents().length();
+				
+				lf.filename = pre + entry.getName();
+				lf.extra = "";
+				
+				lfs.push_back( std::make_pair( lf, ss.tellp() ) );
+				writeLocalFileHeader( ss, lf );
+				ss.write( data.c_str(), data.length() );
+			}
+		}
 	}
 }
 
@@ -443,6 +755,86 @@ namespace zip
 		return true;
 	}
 	
+	bool File::saveToFile( const std::string& filename )
+	{
+		std::fstream file( filename.c_str(), std::fstream::out | std::fstream::trunc | std::fstream::binary );
+		if ( !file )
+		{
+			return false;
+		}
+		
+		std::string contents;
+		saveToMemory( contents );
+		file.write( contents.c_str(), contents.length() );
+		
+		return true;
+	}
+	
+	void File::saveToMemory( std::string& contents )
+	{
+		std::stringstream ss( "", std::stringstream::out | std::stringstream::trunc | std::stringstream::binary );
+		
+		try
+		{
+			std::vector< std::pair< LocalFileHeader, std::size_t > > lfs;
+			lfs.reserve( children.size() );
+			writeFile( ss, ( * this ), lfs );
+			
+			std::streampos centralDirStart = ss.tellp();
+			for ( std::size_t i = 0; i < lfs.size(); ++i )
+			{
+				CentralDirectoryStructure cd;
+				cd.versionMade = 20;
+				
+				cd.minVersion = lfs[ i ].first.minVersion;
+				cd.flags = lfs[ i ].first.flags;
+				cd.compressType = lfs[ i ].first.compressType;
+				
+				cd.lastModTime = lfs[ i ].first.lastModTime;
+				cd.lastModDate = lfs[ i ].first.lastModDate;
+				
+				cd.crc32 = lfs[ i ].first.crc32;
+				
+				cd.sizeCompressed = lfs[ i ].first.sizeCompressed;
+				cd.sizeNormal = lfs[ i ].first.sizeNormal;
+				
+				cd.filename = lfs[ i ].first.filename;
+				cd.extra = lfs[ i ].first.extra;
+				
+				cd.comment = "";
+				
+				cd.diskNumStart = 0;//? i; // ?
+				cd.inAttr = 0;
+				cd.exAttr = 0;
+				cd.localHeaderOffset = lfs[ i ].second;
+				
+				writeCentralDir( ss, cd );
+			}
+			
+			{
+				EndCentralDirectoryStructure ecd;
+				ecd.diskNum = 0;
+				ecd.diskNumStartCentralDirectory = 0;
+				
+				ecd.entryCountDisk = lfs.size();
+				ecd.entryCountCentral = lfs.size();
+				
+				ecd.centralDirSize = ss.tellp() - centralDirStart;
+				ecd.centralDirOffset = centralDirStart;
+				
+				ecd.comment = "";
+				
+				writeEndCentralDir( ss, ecd );
+			}
+			
+			contents = ss.str();
+		}
+		catch ( std::exception& exception )
+		{
+			print( "Error saving zip file, exception: " << exception.what() << std::endl );
+		}
+	}
+	
 	void File::addFile( const std::string& path, const std::string& contents )
 	{
 		Entry* entry = getEntry( path );
@@ -525,84 +917,5 @@ namespace zip
 		
 		entry->children.emplace_back( new Entry() );
 		return entry->children.back().get();
-	}
-	
-	void File::readAndInflate( std::stringstream& ss, std::string& contents )
-	{
-		std::size_t beforePos = ss.tellg();
-		
-		z_stream stream;
-		stream.zalloc = Z_NULL;
-		stream.zfree = Z_NULL;
-		stream.opaque = Z_NULL;
-		stream.next_in = Z_NULL;
-		stream.avail_in = 0;
-		
-		int ret = inflateInit2( &stream, -15 ); // -15 == use raw deflate data, not header/check values. Took me a while to find that :P
-		if ( ret != Z_OK )
-		{
-			throw std::runtime_error( "Failed to init zlib inflate." );
-		}
-		
-		class InflateEnder
-		{
-			public:
-				InflateEnder( z_stream& theStream )
-				   : stream( theStream )
-				{
-				}
-				
-				~InflateEnder()
-				{
-					inflateEnd( &stream );
-				}
-			
-			private:
-				z_stream& stream;
-		} ie( stream );
-		
-		constexpr std::size_t BUFFER_SIZE = 16;
-		unsigned char bufferIn[ BUFFER_SIZE ];
-		unsigned char bufferOut[ BUFFER_SIZE ];
-		do
-		{
-			ss.read( reinterpret_cast< char* >( bufferIn ), BUFFER_SIZE );
-			stream.avail_in = ss.gcount();
-			if ( ss.bad() )
-			{
-				throw std::runtime_error( "Some error with reading the stream?" );
-			}
-			
-			if ( stream.avail_in == 0 )
-			{
-				break;
-			}
-			
-			stream.next_in = bufferIn;
-			
-			do
-			{
-				stream.avail_out = BUFFER_SIZE;
-				stream.next_out = bufferOut;
-				ret = inflate( &stream, Z_NO_FLUSH );
-				
-				switch ( ret )
-				{
-					case Z_NEED_DICT:
-						//ret = Z_DATA_ERROR;
-					case Z_DATA_ERROR:
-					case Z_MEM_ERROR:
-					case Z_STREAM_ERROR:
-						throw std::runtime_error( "Some error with inflate: " + util::toString( ret ) );
-				}
-				
-				unsigned int have = BUFFER_SIZE - stream.avail_out;
-				contents += std::string( reinterpret_cast< char* >( bufferOut ), have );
-			}
-			while ( stream.avail_out == 0 );
-		}
-		while ( ret != Z_STREAM_END );
-		
-		ss.seekg( beforePos + stream.total_in );
 	}
 }

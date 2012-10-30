@@ -53,6 +53,7 @@ namespace zip
 		}
 		
 		// http://stackoverflow.com/questions/856542/elegant-solution-to-duplicate-const-and-non-const-getters
+		// This was more important when most of getEntryIterator() was in the const getEntry() :P
 		Entry* EntryBase::getEntry( const std::string& path )
 		{
 			return const_cast< Entry* >( static_cast< const EntryBase* >( this )->getEntry( path ) );
