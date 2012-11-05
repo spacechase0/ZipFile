@@ -24,7 +24,7 @@
 
 #include "zip/EntryBase.hpp"
 
-#include <util/Tokenize.h>
+#include <util/String.hpp>
 
 #include "zip/Entry.hpp"
 

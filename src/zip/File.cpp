@@ -27,10 +27,9 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
-#include <util/Convert.h>
 #include <util/Crc32.hpp>
-#include <util/Endian.h>
-#include <util/Tokenize.h>
+#include <util/Endian.hpp>
+#include <util/String.hpp>
 #include <zlib.h>
 
 #if false

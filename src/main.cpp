@@ -25,7 +25,7 @@
 #include <iostream>
 #include <string>
 
-#include <util/Tokenize.h>
+#include <util/String.hpp>
 
 #include "zip/File.hpp"
 
