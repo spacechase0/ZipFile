@@ -194,11 +194,18 @@ int main( int argc, char* argv[] )
 	bool foundNopause = false;
 	for ( std::size_t i = 1; i < argc; ++i )
 	{
+		std::cout << std::string(argv[i]).length()<<" '" << argv[i]<<"'"<<std::endl;
+		std::cout << "_ '--zipper'"<<std::endl;
 		if ( argv[ i ] != std::string( "--nopause" ) )
 		{
 			foundNopause = true;
 		}
-		else if ( argv[ i ] == std::string( "--zipper") )
+		// TODO: Make these work
+		else if ( argv[ i ] == std::string( "--zipview" ) )
+		{
+			mode = "zipview";
+		}
+		else if ( argv[ i ] == std::string( "--zipper" ) )
 		{
 			mode = "zipper";
 		}
@@ -213,7 +220,7 @@ int main( int argc, char* argv[] )
 	#ifndef DEBUG
 	if ( argc <= 2 )
 	{
-		std::cout << "Usage: zipfile <filename> [--nopause,--zipper]" << std::endl;
+		std::cout << "Usage: zipfile <filename> [--nopause,--zipview,--zipper]" << std::endl;
 	}
 	#endif
 	
@@ -221,7 +228,7 @@ int main( int argc, char* argv[] )
 	{
 		return zipview( argc, argv );
 	}
-	else
+	else if ( mode == "zipper" )
 	{
 		return zipper( argc, argv );
 	}

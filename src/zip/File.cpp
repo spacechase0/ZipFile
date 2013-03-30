@@ -498,9 +498,16 @@ namespace
 					case Z_NEED_DICT:
 						//ret = Z_DATA_ERROR;
 					case Z_DATA_ERROR:
+						throw std::runtime_error( "Data error with inflate: " + util::toString( ret ) );
+						break;
+						
 					case Z_MEM_ERROR:
+						throw std::runtime_error( "Memory error with inflate: " + util::toString( ret ) );
+						break;
+						
 					case Z_STREAM_ERROR:
-						throw std::runtime_error( "Some error with inflate: " + util::toString( ret ) );
+						throw std::runtime_error( "Stream error with inflate: " + util::toString( ret ) );
+						break;
 				}
 				
 				unsigned int have = BUFFER_SIZE - stream.avail_out;
@@ -546,7 +553,7 @@ namespace
 		std::stringstream ss( contents, std::stringstream::in | std::stringstream::binary );
 		std::string toReturn;
 		
-		constexpr std::size_t BUFFER_SIZE = 16;
+		constexpr std::size_t BUFFER_SIZE = 16384;
 		unsigned char bufferIn[ BUFFER_SIZE ];
 		unsigned char bufferOut[ BUFFER_SIZE ];
 		do
