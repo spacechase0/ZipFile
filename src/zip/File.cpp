@@ -32,16 +32,32 @@
 #include <util/String.hpp>
 #include <zlib.h>
 
-#if false
+#if true
 	#include <iostream>
 	
-	#define print(a) std::cout << a
+	#define print(a) std::cout << a << std::endl
 #else
 	#define print(a)
 #endif
 
 // TO DO: Organize this mess!
 // Also: Ignoring Zip64 :P
+
+// Why did they remove this? :(
+// I need a proper replacement
+// From SFML/Config.hpp
+#if defined(__m68k__) || defined(mc68000) || defined(_M_M68K) || (defined(__MIPS__) && defined(__MISPEB__)) || \
+    defined(__ppc__) || defined(__POWERPC__) || defined(_M_PPC) || defined(__sparc__) || defined(__hppa__)
+
+    // Big endian
+    #define SFML_ENDIAN_BIG
+
+#else
+
+    // Little endian
+    #define SFML_ENDIAN_LITTLE
+
+#endif
 
 namespace
 {
@@ -674,6 +690,7 @@ namespace zip
 			std::size_t endCentralDirPos = findEndCentralDir( contents );
 			if ( endCentralDirPos == std::string::npos )
 			{
+				print( "no end central dir" );
 				return false;
 			}
 			ss.seekg( endCentralDirPos );

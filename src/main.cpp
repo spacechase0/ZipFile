@@ -73,23 +73,10 @@ namespace
 	}
 }
 
-int main_zip( int argc, char* argv[] )
+int zipview( int argc, char* argv[] )
 {
-	std::unique_ptr< ConsolePauser > cp;
-	if ( argc < 3 or argv[ 2 ] != std::string( "--nopause" ) )
-	{
-		cp.reset( new ConsolePauser() );
-	}
-	
-	#ifndef DEBUG
-	if ( argc < 2 )
-	{
-		std::cout << "Usage: zipfile <filename> [--nopause]" << std::endl;
-	}
-	#endif
-	
 	zip::File file;
-	if ( !file.loadFromFile( ( argc > 1 ) ? argv[ 1 ] : "win.zip" ) )
+	if ( !file.loadFromFile( ( argc > 1 ) ? argv[ 1 ] : "out.zip" ) )
 	{
 		std::cout << "Failed to load zip file." << std::endl;
 		return 1;
@@ -170,4 +157,74 @@ int main_zip( int argc, char* argv[] )
 	
 	return 0;
 }
-//int main(int argc, char* argv[]){main_zip(argc,argv);}
+#include<fstream>
+int zipper( int argc, char* argv[] )
+{
+	#ifdef DEBUG
+		std::string filename = "jinput-raw.dll";
+	#else
+		std::string filename = argv[ 2 ];
+	#endif
+	
+	std::cout << "Getting file contents..." << std::endl;
+	std::string contents;
+	{
+		std::fstream file( filename.c_str(), std::fstream::in | std::fstream::binary | std::fstream::ate );
+		contents = std::string( file.tellg(), '\0' );
+		file.seekg( 0 );
+		file.read( &contents[ 0 ], contents.length() );
+		file.close();
+	}
+	
+	std::cout << "Adding to zip..." << std::endl;
+	{
+		zip::File file;
+		//file.loadFromFile( "out.zip" );
+		file.addFile( filename, contents );
+		//file.addFile("README","test");
+		file.saveToFile( "out.zip" );
+	}
+	
+	return 0;
+}
+
+int main( int argc, char* argv[] )
+{
+	std::string mode = "zipview";
+	bool foundNopause = false;
+	for ( std::size_t i = 1; i < argc; ++i )
+	{
+		if ( argv[ i ] != std::string( "--nopause" ) )
+		{
+			foundNopause = true;
+		}
+		else if ( argv[ i ] == std::string( "--zipper") )
+		{
+			mode = "zipper";
+		}
+	}
+	
+	std::unique_ptr< ConsolePauser > cp;
+	if ( !foundNopause )
+	{
+		cp.reset( new ConsolePauser() );
+	}
+	
+	#ifndef DEBUG
+	if ( argc <= 2 )
+	{
+		std::cout << "Usage: zipfile <filename> [--nopause,--zipper]" << std::endl;
+	}
+	#endif
+	
+	if ( mode == "zipview" )
+	{
+		return zipview( argc, argv );
+	}
+	else
+	{
+		return zipper( argc, argv );
+	}
+	
+	return 0;
+}
