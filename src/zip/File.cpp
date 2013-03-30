@@ -32,7 +32,7 @@
 #include <util/String.hpp>
 #include <zlib.h>
 
-#if true
+#if false
 	#include <iostream>
 	
 	#define print(a) std::cout << a << std::endl
