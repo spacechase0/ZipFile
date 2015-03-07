@@ -4,3 +4,4 @@ obj
 src/ZipFile.depend
 src/ZipFile.layout
 src/ZipFile_build_log.html
+*.dll
